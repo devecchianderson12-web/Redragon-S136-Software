@@ -8,34 +8,43 @@ using Microsoft.Win32.SafeHandles;
 namespace S136Battery
 {
     // Receptor 2.4G Evision (VID 320F). Protocolo sacado del software S136:
-    // paquete 64 bytes, [0]=04, [1..2]=suma bytes 3..63, [3]=cmd, [4]=len, [32]=destino.
+    // paquete 64 bytes, [0]=04, [1..2]=suma bytes 3..63, [3]=cmd, [4]=largo,
+    // [5..6]=offset, [7]=estado, [8..]=datos, [32]=destino (1 teclado, 2 ratón).
+    // Con destino en [32] solo caben 24 bytes de datos por paquete.
     class Receiver : IDisposable
     {
         const ushort Vid = 0x320F;
         const ushort VendorPage = 0xFF1C;
-        const byte CmdLink = 0xAA;
+        const byte CmdBegin = 0x01;
+        const byte CmdEnd = 0x02;
+        const byte CmdRead = 0x05;
+        const byte CmdWrite = 0x06;
         const byte CmdBattery = 0x1A;
+        const byte CmdLink = 0xAA;
+        const int Chunk = 0x18;
         public const byte Keyboard = 1;
         public const byte Mouse = 2;
 
         SafeFileHandle wr, rd;
-        Thread reader;
         readonly BlockingCollection<byte[]> inbox = new BlockingCollection<byte[]>();
+        readonly object gate = new object();
 
         public bool IsOpen { get { return wr != null && !wr.IsInvalid && !wr.IsClosed; } }
 
         public bool Open()
         {
-            Close();
-            string path = Find();
-            if (path == null) return false;
-            wr = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-            rd = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
-            if (wr.IsInvalid || rd.IsInvalid) { Close(); return false; }
-            var h = rd;
-            reader = new Thread(() => ReadLoop(h)) { IsBackground = true };
-            reader.Start();
-            return true;
+            lock (gate)
+            {
+                Close();
+                string path = Find();
+                if (path == null) return false;
+                wr = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+                rd = Native.CreateFile(path, 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+                if (wr.IsInvalid || rd.IsInvalid) { Close(); return false; }
+                var h = rd;
+                new Thread(() => ReadLoop(h)) { IsBackground = true }.Start();
+                return true;
+            }
         }
 
         void ReadLoop(SafeFileHandle h)
@@ -51,27 +60,34 @@ namespace S136Battery
 
         public void Close()
         {
-            if (rd != null) { Native.CancelIoEx(rd, IntPtr.Zero); rd.Dispose(); rd = null; }
-            if (wr != null) { wr.Dispose(); wr = null; }
-            byte[] x;
-            while (inbox.TryTake(out x)) { }
+            lock (gate)
+            {
+                if (rd != null) { Native.CancelIoEx(rd, IntPtr.Zero); rd.Dispose(); rd = null; }
+                if (wr != null) { wr.Dispose(); wr = null; }
+                byte[] x;
+                while (inbox.TryTake(out x)) { }
+            }
         }
 
         public void Dispose() { Close(); }
 
-        byte[] Send(byte cmd, byte len, byte target)
+        // Manda un paquete y espera la respuesta del mismo comando y destino.
+        byte[] Send(byte cmd, byte target, int len, int offset, byte[] data)
         {
+            if (!IsOpen) throw new System.IO.IOException("closed");
             byte[] x;
             while (inbox.TryTake(out x)) { }
             var p = new byte[64];
-            p[0] = 4; p[3] = cmd; p[4] = len;
+            p[0] = 4; p[3] = cmd; p[4] = (byte)len;
+            p[5] = (byte)offset; p[6] = (byte)(offset >> 8);
+            if (data != null) Array.Copy(data, 0, p, 8, data.Length);
             int sum = 0;
             for (int i = 3; i < 64; i++) sum += p[i];
             p[1] = (byte)sum; p[2] = (byte)(sum >> 8);
             p[32] = target;
             int n;
             if (!Native.WriteFile(wr, p, 64, out n, IntPtr.Zero)) throw new System.IO.IOException("write");
-            var until = DateTime.UtcNow.AddMilliseconds(800);
+            var until = DateTime.UtcNow.AddMilliseconds(2500);
             while (true)
             {
                 int left = (int)(until - DateTime.UtcNow).TotalMilliseconds;
@@ -82,21 +98,58 @@ namespace S136Battery
             }
         }
 
-        // Devuelve % o -1 si apagado / sin respuesta.
-        public void Read(out int keyboard, out int mouse)
+        // Batería en %, o -1 si apagado / dormido.
+        public void ReadBattery(out int keyboard, out int mouse)
         {
-            keyboard = mouse = -1;
-            var link = Send(CmdLink, 0, 0);
-            bool kbOn = link == null || link[8] == 0xFF;
-            bool msOn = link == null || link[9] == 0xFF;
-            if (kbOn) keyboard = Level(Send(CmdBattery, 6, Keyboard));
-            if (msOn) mouse = Level(Send(CmdBattery, 6, Mouse));
+            lock (gate)
+            {
+                keyboard = mouse = -1;
+                var link = Send(CmdLink, 0, 0, 0, null);
+                bool kbOn = link == null || link[8] == 0xFF;
+                bool msOn = link == null || link[9] == 0xFF;
+                if (kbOn) keyboard = Level(Send(CmdBattery, Keyboard, 6, 0, null));
+                if (msOn) mouse = Level(Send(CmdBattery, Mouse, 6, 0, null));
+            }
         }
 
         static int Level(byte[] r)
         {
             if (r == null || r[8] > 100) return -1;
             return r[8];
+        }
+
+        public byte[] ReadConfig(byte target, int offset, int len)
+        {
+            lock (gate)
+            {
+                var res = new byte[len];
+                for (int done = 0; done < len; done += Chunk)
+                {
+                    int n = Math.Min(Chunk, len - done);
+                    var r = Send(CmdRead, target, n, offset + done, null);
+                    if (r == null) return null;
+                    Array.Copy(r, 8, res, done, n);
+                }
+                return res;
+            }
+        }
+
+        public bool WriteConfig(byte target, int offset, byte[] data)
+        {
+            lock (gate)
+            {
+                if (Send(CmdBegin, target, 0, 0, null) == null) return false;
+                bool ok = true;
+                for (int done = 0; done < data.Length && ok; done += Chunk)
+                {
+                    int n = Math.Min(Chunk, data.Length - done);
+                    var part = new byte[n];
+                    Array.Copy(data, done, part, 0, n);
+                    ok = Send(CmdWrite, target, n, offset + done, part) != null;
+                }
+                Send(CmdEnd, target, 0, 0, null);
+                return ok;
+            }
         }
 
         static string Find()
