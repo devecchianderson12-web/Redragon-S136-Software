@@ -10,7 +10,7 @@ namespace S136Battery
 {
     static class Program
     {
-        public const string Version = "2.0.0";
+        public const string Version = "2.1.0";
 
         [STAThread]
         static void Main(string[] args)
@@ -103,7 +103,10 @@ namespace S136Battery
         int mouseLevel = -2, kbLevel = -2;
         int busy;
         bool quitting, snapping;
+        UpdateToast toast;
+        readonly System.Windows.Forms.Timer updTimer = new System.Windows.Forms.Timer();
         Icon trayIcon;
+        readonly Label updStatus = new Label();
 
         public MainForm()
         {
@@ -146,6 +149,42 @@ namespace S136Battery
             timer.Interval = 60000;
             timer.Tick += (s, e) => Poll();
             timer.Start();
+
+            // Buscar actualización a los 8 s y luego cada 6 h.
+            updTimer.Interval = 8000;
+            updTimer.Tick += (s, e) => { updTimer.Interval = 6 * 3600 * 1000; CheckUpdate(false); };
+            updTimer.Start();
+        }
+
+        void CheckUpdate(bool manual)
+        {
+            if (snapping || (toast != null && !toast.IsDisposed)) return;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                var r = Updater.Check();
+                if (!IsHandleCreated) return;
+                BeginInvoke(new Action(() =>
+                {
+                    if (r != null) ShowToast(r);
+                    else if (manual) updStatus.Text = "Ya tienes la última versión.";
+                }));
+            });
+        }
+
+        void ShowToast(Updater.Release r)
+        {
+            if (toast != null && !toast.IsDisposed) return;
+            toast = new UpdateToast(r);
+            toast.UpdateClicked += (s, e) => ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string err = Updater.Prepare(r, Application.ExecutablePath);
+                BeginInvoke(new Action(() =>
+                {
+                    if (err == null) Quit();
+                    else toast.Fail(err);
+                }));
+            });
+            toast.Popup();
         }
 
         static Icon MakeIcon(int size)
@@ -299,8 +338,10 @@ namespace S136Battery
             var bright = AddSlider("Brillo", x, ref y, colW, v => state.Brightness = v);
             var speed = AddSlider("Velocidad", x, ref y, colW, v => state.Speed = v);
 
+            var colorRow = new System.Collections.Generic.List<Control>();
             var colorLbl = new Label { Text = "Color", ForeColor = Theme.Text, AutoSize = true, Location = new Point(x, y + 4), BackColor = Theme.Back };
             device.Controls.Add(colorLbl);
+            colorRow.Add(colorLbl);
             var swatches = new Swatch[Presets.Length + 1];
             for (int i = 0; i <= Presets.Length; i++)
             {
@@ -319,6 +360,7 @@ namespace S136Battery
                 };
                 swatches[i] = sw;
                 device.Controls.Add(sw);
+                colorRow.Add(sw);
             }
             swatches[Presets.Length].Custom = true;
             y += 42;
@@ -326,8 +368,20 @@ namespace S136Battery
             var multi = new Toggle { Label = "Multicolor (arcoíris)", Width = colW, Location = new Point(x, y) };
             multi.Changed += (s, e) => state.Multicolor = multi.On;
             device.Controls.Add(multi);
+            colorRow.Add(multi);
             y += 46;
 
+            if (!dev.SupportsColor)
+            {
+                foreach (var c in colorRow) c.Visible = false;
+                y -= 88;
+                device.Controls.Add(new Label
+                {
+                    Text = "Este teclado tiene luz arcoíris fija: el color no se puede elegir.",
+                    ForeColor = Theme.Dim, AutoSize = true, Location = new Point(x, y + 6), BackColor = Theme.Back,
+                });
+                y += 40;
+            }
             var status = new Label { Text = "Leyendo luces…", ForeColor = Theme.Dim, AutoSize = false, Size = new Size(colW - 170, 34), Location = new Point(x, y), TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Back };
             device.Controls.Add(status);
             var apply = new FlatButton { Text = "Aplicar", Filled = true, Size = new Size(150, 36), Location = new Point(x + colW - 150, y), Enabled = false };
@@ -415,7 +469,16 @@ namespace S136Battery
             min.On = Settings.StartMinimized;
             min.Changed += (s, e) => { try { Settings.StartMinimized = min.On; } catch { } };
             settings.Controls.Add(min);
-            y += 70;
+            y += 60;
+            var check = new FlatButton { Text = "Buscar actualizaciones", Size = new Size(200, 34), Location = new Point(x, y) };
+            check.Click += (s, e) => { updStatus.Text = "Buscando…"; CheckUpdate(true); };
+            settings.Controls.Add(check);
+            updStatus.SetBounds(x + 214, y, 300, 34);
+            updStatus.ForeColor = Theme.Dim;
+            updStatus.BackColor = Theme.Back;
+            updStatus.TextAlign = ContentAlignment.MiddleLeft;
+            settings.Controls.Add(updStatus);
+            y += 60;
             settings.Controls.Add(new Label
             {
                 Text = "Versión " + Program.Version + "  ·  Proyecto no oficial, sin relación con Redragon.",
@@ -536,6 +599,11 @@ namespace S136Battery
             OpenDevice(DeviceLighting.Mouse); Application.DoEvents(); save(this, "mouse.png");
             ShowPage(settings); save(this, "settings.png");
             save(popup, "tray.png");
+            var t = new UpdateToast(new Updater.Release { Tag = "v9.9.9", Version = new Version(9, 9, 9) });
+            t.Location = new Point(-4000, -2000);
+            t.Show();
+            Application.DoEvents();
+            save(t, "toast.png");
         }
 
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);

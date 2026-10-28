@@ -7,11 +7,12 @@ Un solo `.exe`. Sin instalar.
 ## Qué hace
 
 - **Dispositivos:** tarjetas de Mouse y Teclado con su foto, batería y estado.
-- **Iluminación** (clic en una tarjeta): modo, brillo, velocidad, color y multicolor. Se guarda en el aparato.
+- **Iluminación** (clic en una tarjeta): modo, brillo y velocidad. En el ratón también color y multicolor. Se guarda en el aparato.
   - Teclado: 18 modos (Fijo, Respiración, Espectro, Ondulado, Ola, Nube, Serpentina, Reacción, Ondas, Travesía, Estrellas, Flores, Rodar, Caricatura, Lluvia, Escaneo, Cascada, Velocidad).
   - Ratón: Fijo, Respiración, Espectro, Ondulado, Pulso, Reacción, Apagado.
 - **Bandeja:** clic derecho muestra `Mouse · 2.4G · 100% batería` y lo mismo para el teclado, más Dispositivos, Ajustes y Salir. Clic izquierdo abre la ventana.
 - **Ajustes:** iniciar con Windows e iniciar minimizado.
+- **Actualizaciones:** al abrir (y cada 6 h) busca una release nueva en GitHub. Si hay, sale un aviso abajo a la derecha; con **Actualizar** baja el `.exe`, lo reemplaza y reinicia la app.
 - Lee la batería cada 60 s y al abrir el menú.
 
 ## Uso
@@ -63,7 +64,7 @@ Bloque de luces por perfil (byte 0 del bloque 0 = perfil activo). Hay que escrib
 | multicolor | 5 | 5 |
 | color | 6 R, 7 G, 8 B | 6 R, 7 B, 8 G |
 
-En el ratón, el modo Fijo muestra el color elegido solo con multicolor apagado.
+En el ratón, el modo Fijo muestra el color elegido solo con multicolor apagado. El teclado del S136 ignora el color: su luz es arcoíris fija.
 
 ## Aviso
 

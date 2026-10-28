@@ -26,6 +26,8 @@ namespace S136Battery
     {
         public readonly byte Target;
         public readonly LightMode[] Modes;
+        // Probado: el teclado del S136 ignora el color elegido (su luz es arcoíris fija).
+        public bool SupportsColor { get { return Target == Receiver.Mouse; } }
         readonly int blockSize, blockLen;
         readonly int colorfulAt;
         readonly bool mouseColorOrder;

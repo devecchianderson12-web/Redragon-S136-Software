@@ -51,6 +51,7 @@ namespace S136Battery
             Location = new Point(x, Math.Max(wa.Top, Math.Min(y, wa.Bottom - Height - 8)));
             hot = -1;
             Show();
+            Rounded.Apply(this, 8);
             Activate();
             Invalidate();
         }
