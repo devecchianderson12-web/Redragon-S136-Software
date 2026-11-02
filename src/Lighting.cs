@@ -77,6 +77,32 @@ namespace S136Battery
             return s;
         }
 
+        // Apaga las luces y devuelve lo necesario para restaurarlas.
+        public bool TurnOff(Receiver rx, out byte mode, out int brightness)
+        {
+            mode = 0; brightness = 0;
+            int b = Base(rx);
+            if (b < 0) return false;
+            var d = rx.ReadConfig(Target, b, blockLen);
+            if (d == null) return false;
+            mode = d[1];
+            brightness = d[2];
+            if (mouseColorOrder) d[1] = 6; // ratón: modo Apagado
+            else d[2] = 0;                 // teclado: sin modo Apagado, brillo 0
+            return rx.WriteConfig(Target, b, d);
+        }
+
+        public bool Restore(Receiver rx, byte mode, int brightness)
+        {
+            int b = Base(rx);
+            if (b < 0) return false;
+            var d = rx.ReadConfig(Target, b, blockLen);
+            if (d == null) return false;
+            d[1] = mode;
+            d[2] = (byte)brightness;
+            return rx.WriteConfig(Target, b, d);
+        }
+
         // El aparato solo acepta el bloque entero desde su inicio, como hace S136.exe.
         public bool Write(Receiver rx, LightState s)
         {

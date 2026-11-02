@@ -12,6 +12,7 @@ Un solo `.exe`. Sin instalar.
   - Ratón: Fijo, Respiración, Espectro, Ondulado, Pulso, Reacción, Apagado.
 - **Bandeja:** clic derecho muestra `Mouse · 2.4G · 100% batería` y lo mismo para el teclado, más Dispositivos, Ajustes y Salir. Clic izquierdo abre la ventana.
 - **Ajustes:** iniciar con Windows e iniciar minimizado.
+- **Inactividad:** apaga las luces tras 1, 5, 10, 20 o 30 minutos sin usar cada aparato y las restaura al volver a usarlo. No suspende el aparato: el firmware no ofrece ese ajuste.
 - **Actualizaciones:** al abrir (y cada 6 h) busca una release nueva en GitHub. Si hay, sale un aviso abajo a la derecha; con **Actualizar** baja el `.exe`, lo reemplaza y reinicia la app.
 - Lee la batería cada 60 s y al abrir el menú.
 

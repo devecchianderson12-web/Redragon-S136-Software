@@ -10,7 +10,7 @@ namespace S136Battery
 {
     static class Program
     {
-        public const string Version = "2.1.0";
+        public const string Version = "2.2.0";
 
         [STAThread]
         static void Main(string[] args)
@@ -76,6 +76,52 @@ namespace S136Battery
             }
         }
 
+        public static int IdleMinutes
+        {
+            get
+            {
+                using (var k = Registry.CurrentUser.OpenSubKey(Key))
+                    return k == null ? 0 : (int)k.GetValue("IdleMinutes", 0);
+            }
+            set
+            {
+                using (var k = Registry.CurrentUser.CreateSubKey(Key))
+                    k.SetValue("IdleMinutes", value, RegistryValueKind.DWord);
+            }
+        }
+
+        // Luz guardada antes de apagar: sobrevive si la app se cierra con las luces apagadas.
+        public static bool HasSavedLight(byte target)
+        {
+            int m, b;
+            return GetSavedLight(target, out m, out b);
+        }
+
+        public static bool GetSavedLight(byte target, out int mode, out int brightness)
+        {
+            mode = brightness = 0;
+            using (var k = Registry.CurrentUser.OpenSubKey(Key))
+            {
+                object v = k == null ? null : k.GetValue("SavedLight" + target);
+                if (v == null) return false;
+                mode = (int)v & 0xFF;
+                brightness = ((int)v >> 8) & 0xFF;
+                return true;
+            }
+        }
+
+        public static void SaveLight(byte target, int mode, int brightness)
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(Key))
+                k.SetValue("SavedLight" + target, mode | brightness << 8, RegistryValueKind.DWord);
+        }
+
+        public static void ClearSavedLight(byte target)
+        {
+            using (var k = Registry.CurrentUser.CreateSubKey(Key))
+                k.DeleteValue("SavedLight" + target, false);
+        }
+
         // Si movieron el .exe, arreglar la ruta de inicio.
         public static void FixRunPath()
         {
@@ -107,6 +153,7 @@ namespace S136Battery
         readonly System.Windows.Forms.Timer updTimer = new System.Windows.Forms.Timer();
         Icon trayIcon;
         readonly Label updStatus = new Label();
+        IdleLights idle;
 
         public MainForm()
         {
@@ -146,6 +193,7 @@ namespace S136Battery
             tray.Visible = true;
 
             Settings.FixRunPath();
+            idle = new IdleLights(rx);
             timer.Interval = 60000;
             timer.Tick += (s, e) => Poll();
             timer.Start();
@@ -410,7 +458,12 @@ namespace S136Battery
                 ThreadPool.QueueUserWorkItem(_ =>
                 {
                     bool ok;
-                    try { ok = (rx.IsOpen || rx.Open()) && dev.Write(rx, snap); } catch { ok = false; rx.Close(); }
+                    try
+                    {
+                        idle.Reset(dev);
+                        ok = (rx.IsOpen || rx.Open()) && dev.Write(rx, snap);
+                    }
+                    catch { ok = false; rx.Close(); }
                     BeginInvoke(new Action(() =>
                     {
                         if (apply.IsDisposed) return;
@@ -469,7 +522,26 @@ namespace S136Battery
             min.On = Settings.StartMinimized;
             min.Changed += (s, e) => { try { Settings.StartMinimized = min.On; } catch { } };
             settings.Controls.Add(min);
-            y += 60;
+            y += 54;
+            settings.Controls.Add(new Label { Text = "Apagar luces por inactividad", ForeColor = Theme.Text, AutoSize = true, Location = new Point(x, y), BackColor = Theme.Back });
+            y += 30;
+            int[] options = { 0, 1, 5, 10, 20, 30 };
+            var idleButtons = new FlatButton[options.Length];
+            for (int i = 0; i < options.Length; i++)
+            {
+                int value = options[i];
+                var b = new FlatButton { Text = value == 0 ? "Nunca" : value + " min", Size = new Size(72, 32), Location = new Point(x + i * 78, y), Selected = value == Settings.IdleMinutes };
+                b.Click += (s, e) =>
+                {
+                    try { Settings.IdleMinutes = value; } catch { }
+                    for (int k = 0; k < idleButtons.Length; k++) { idleButtons[k].Selected = options[k] == value; idleButtons[k].Invalidate(); }
+                };
+                idleButtons[i] = b;
+                settings.Controls.Add(b);
+            }
+            y += 42;
+            settings.Controls.Add(new Label { Text = "Se prenden solas al volver a usar el aparato.", ForeColor = Theme.Dim, AutoSize = true, Location = new Point(x, y), BackColor = Theme.Back });
+            y += 40;
             var check = new FlatButton { Text = "Buscar actualizaciones", Size = new Size(200, 34), Location = new Point(x, y) };
             check.Click += (s, e) => { updStatus.Text = "Buscando…"; CheckUpdate(true); };
             settings.Controls.Add(check);
@@ -502,7 +574,14 @@ namespace S136Battery
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
+            if (idle != null) idle.Listen(Handle);
             Poll();
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (idle != null) idle.Message(ref m);
+            base.WndProc(ref m);
         }
 
         protected override void OnPaint(PaintEventArgs e)
